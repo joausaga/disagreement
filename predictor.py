@@ -29,32 +29,33 @@ def cast_to_numeric(df, numerical_predictors):
 def check_corr_num_vars(df, numerical_predictors, alpha_level):
     num_var_1 = numerical_predictors[0]
     num_var_2 = numerical_predictors[1]
-    _, p_val = stats.spearmanr(
-        df[num_var_1], 
-        df[num_var_2]
-    )
-    if p_val < alpha_level:
-        return True
+    cor, p_val = stats.spearmanr(df[num_var_1], df[num_var_2])
+    if cor > 0.5:
+        if p_val < alpha_level:
+            return True
+        else:
+            return False
     else:
         return False
 
 
 def check_corr_cat_num_vars(df, numerical_predictors, predictors, alpha_level):
-    independence_num_cat = pd.DataFrame(columns=numerical_predictors, 
+    independence_num_cat = pd.DataFrame(columns=['number_of_likes_cor', 'number_of_likes_p_value', 
+                                                 'number_of_ideas_cor', 'number_of_ideas_p_value'], 
                                         index=predictors)
-    independence_num_cat_vars = defaultdict(list)
-    for predictor_1 in numerical_predictors:
-        for predictor_2 in predictors:
+    for predictor_1 in numerical_predictors:    
+        for predictor_2 in predictors:        
             if predictor_2 == predictor_1:
                 continue
-            _, p_val = stats.spearmanr(df[predictor_1],df[predictor_2])        
-            if p_val < alpha_level:
-                independence_num_cat.loc[predictor_2,predictor_1] = 'F'
+            correlation, p_value = stats.spearmanr(df[predictor_1],df[predictor_2])
+            if predictor_1 == 'number_of_likes':
+                independence_num_cat.loc[predictor_2, 'number_of_likes_cor'] = round(correlation, 3)
+                independence_num_cat.loc[predictor_2, 'number_of_likes_p_value'] = round(p_value, 3)
             else:
-                independence_num_cat.loc[predictor_2,predictor_1] = 'T'
-                independence_num_cat_vars[predictor_1].append(predictor_2)
-    return independence_num_cat_vars
-
+                independence_num_cat.loc[predictor_2, 'number_of_ideas_cor'] = round(correlation, 3)
+                independence_num_cat.loc[predictor_2, 'number_of_ideas_p_value'] = round(p_value, 3)
+    return independence_num_cat
+ 
 
 def cast_to_category(df, numerical_predictors):
     for col in df.columns:
@@ -83,8 +84,8 @@ def check_corr_cat_vars(df, predictors, numerical_predictors, alpha_level):
     return independece_analysis
 
 
-def obtain_possible_models(independece_analysis, independence_num_cat_vars, \
-                           num_vars_correlated):
+def obtain_possible_models(independece_analysis, independence_num_cat, \
+                           num_vars_correlated, numerical_predictors, alpha_level):
     possible_models = [None]*len(independece_analysis.columns)
     idx = 0
     for col in independece_analysis.columns:
@@ -92,17 +93,20 @@ def obtain_possible_models(independece_analysis, independence_num_cat_vars, \
         for row in independece_analysis.index:
             if independece_analysis.loc[row, col] == 'T':
                 possible_models[idx].append(row)
-        # Add independent numerical variables
-        for num_var, ind_cat_vars in independence_num_cat_vars.items():        
-            if col in ind_cat_vars:
-                possible_models[idx].append(num_var)                
-                if num_vars_correlated:
-                    # If numerical variables are correlated,
-                    # after adding a numerical variable to the model
-                    # we break loop because both numerical variables 
-                    # cannot be together in a model since they are
-                    # not independent
+        # Add the numerical variables
+        for num_var in numerical_predictors:
+            found_dependency = False
+            for var in possible_models[idx]:
+                if independence_num_cat.loc[var, f'{num_var}_cor'] > 0.5 and \
+                independence_num_cat.loc[var, f'{num_var}_p_value'] < alpha_level:
+                    found_dependency = True
                     break
+            if not found_dependency:
+                possible_models[idx].append(num_var)
+            # if numerical variables are correlated, only
+            # one of them is included
+            if num_vars_correlated:
+                break     
         idx += 1
     return possible_models
 
@@ -186,10 +190,24 @@ def select_best_models(models):
     return best_models
 
 
+def get_statistically_significant_predictors(model, alpha_level):
+    ss_predictors = []
+    model_predictors = model.pvalues.index
+    for idx, p_value in enumerate(model.pvalues):
+        if p_value < alpha_level:
+            if 'C(' in model_predictors[idx]:
+                predictor_name = model_predictors[idx].split('[T')[0]
+            else:
+                predictor_name = model_predictors[idx]
+            ss_predictors.append(predictor_name)
+    return ss_predictors
+
+
 def predict_disagreement(df, categorial_predictors, numerical_predictors, theme=None):
     alpha_level = 0.05
 
     predictors = categorial_predictors + numerical_predictors
+    
     # 1. Select columns that include predictors and the target variable
     if theme:
         p_df = df.loc[df['topic']==theme, predictors+['disagreement']]
@@ -197,36 +215,50 @@ def predict_disagreement(df, categorial_predictors, numerical_predictors, theme=
         p_df = df.loc[:,predictors+['disagreement']]
     print(f"The analysis is conducted with a dataset composed of "\
           f"{p_df.shape[0]} rows and {p_df.shape[1]} columns")
+
     # 2. Cast variables to numeric
     p_df = cast_to_numeric(p_df, numerical_predictors)
     print(f"After the step above the dataset is composed of {p_df.shape[0]} "\
           f"rows and {p_df.shape[1]} columns")
+    
     #3. Check independence between numerical variables
     num_vars_correlated = check_corr_num_vars(p_df, numerical_predictors, alpha_level)
+   
     # 4. Check independence between numerical and categorical variables
     independence_num_cat_vars = check_corr_cat_num_vars(p_df, numerical_predictors, 
                                                         predictors, alpha_level)
     # 5. Cast categorical variables to category type
     p_df = cast_to_category(p_df, numerical_predictors)
+
     # 6. Check independence of categorial variables
     independece_analysis = check_corr_cat_vars(p_df, predictors, 
                                                numerical_predictors, alpha_level)
     independece_analysis.drop(columns=numerical_predictors, 
                               index=numerical_predictors, inplace=True)
+    
     # 7. Fit models based on independent predictors
     possible_models = obtain_possible_models(independece_analysis, 
                                              independence_num_cat_vars,
-                                             num_vars_correlated)
+                                             num_vars_correlated, numerical_predictors, 
+                                             alpha_level)
     print(f'There are {len(possible_models)} possible models')
     models = create_formulas_for_possible_models(possible_models, numerical_predictors)
     idx_not_fitted_models = fit_models(models, p_df)
     updated_models = update_unfitted_models(idx_not_fitted_models, possible_models,
                                             numerical_predictors, p_df)
     models.extend(updated_models)
+    
     # 8. Select the best model
     best_models = select_best_models(models)
     print(f"There are {len(best_models)} best model(s)")
-    return best_models
+
+    # 9. Fit model with only statistically significant predictors
+    ss_predictors = get_statistically_significant_predictors(best_models[0]['model'],
+                                                             alpha_level)
+    formula = 'disagreement ~ '
+    formula += ' + '.join(ss_predictors)
+    best_model = glm(formula, data = p_df, family = sm.families.Binomial()).fit()
+    return best_model
 
 
 def get_dataset():
@@ -254,13 +286,15 @@ def get_dataset():
     all_df = pd.concat([member_df, admin_df, informal_df], axis=0, ignore_index=True)
     all_df = all_df.drop(['comment', 'response'], axis=1)
     all_df = all_df.rename(columns={'comment_1': 'comment', 'response_1': 'response'})
+    # Remove the last row, which contains summaries of numerical columns
+    all_df = all_df.drop(index=[490])
     return all_df
 
 
 if __name__ == "__main__":
     all_df = get_dataset() 
     predictors_disagreement = [
-        'number_of_likes', 'number_of_ideas', 'simple_disagreement', 'elaborated_disagreement',
+        'number_of_likes', 'number_of_ideas', 'agreement', 'simple_disagreement', 'elaborated_disagreement',
         'topic_shift', 'brainstorming', 'blending', 'building', 'broadening', 'fact',
         'value', 'policy', 'interpretation', 'gives_reason_s', 'presents_evidence', 'asks_question_s',
         'provides_information', 'clarifies_position_stance', 'responds_to_previous_comment', 
@@ -270,6 +304,7 @@ if __name__ == "__main__":
     categorical_predictors = predictors_disagreement.copy()
     for numerical_predictor in numerical_predictors:
         categorical_predictors.remove(numerical_predictor)
-    best_models = predict_disagreement(all_df, categorical_predictors, numerical_predictors, 'informal')
-    print(best_models[0]['model'].summary())
+    best_model = predict_disagreement(all_df, categorical_predictors, numerical_predictors, 'member')
+    print(best_model.summary())
+    #print(best_models[0]['model'].summary())
     
