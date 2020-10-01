@@ -66,7 +66,7 @@ def cast_to_category(df, numerical_predictors):
 
 def check_corr_cat_vars(df, predictors, numerical_predictors, alpha_level):
     independece_analysis = pd.DataFrame(columns=predictors, 
-                                        index=predictors)
+                                        index=predictors)    
     for predictor_1 in predictors:
         if predictor_1 in numerical_predictors:
             continue
@@ -286,8 +286,9 @@ def get_dataset():
     all_df = pd.concat([member_df, admin_df, informal_df], axis=0, ignore_index=True)
     all_df = all_df.drop(['comment', 'response'], axis=1)
     all_df = all_df.rename(columns={'comment_1': 'comment', 'response_1': 'response'})
-    # Remove the last row, which contains summaries of numerical columns
-    all_df = all_df.drop(index=[490])
+    # Remove summary rows
+    idxs_to_remove = all_df[all_df.background.isnull()].index.values
+    all_df = all_df.drop(index=idxs_to_remove)
     return all_df
 
 
@@ -304,7 +305,7 @@ if __name__ == "__main__":
     categorical_predictors = predictors_disagreement.copy()
     for numerical_predictor in numerical_predictors:
         categorical_predictors.remove(numerical_predictor)
-    best_model = predict_disagreement(all_df, categorical_predictors, numerical_predictors, 'member')
+    best_model = predict_disagreement(all_df, categorical_predictors, numerical_predictors, 'informal')
     print(best_model.summary())
     #print(best_models[0]['model'].summary())
     
