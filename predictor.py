@@ -199,7 +199,8 @@ def get_statistically_significant_predictors(model, alpha_level):
                 predictor_name = model_predictors[idx].split('[T')[0]
             else:
                 predictor_name = model_predictors[idx]
-            ss_predictors.append(predictor_name)
+            if predictor_name != 'Intercept':
+                ss_predictors.append(predictor_name)
     return ss_predictors
 
 
@@ -289,13 +290,17 @@ def get_dataset():
     # Remove summary rows
     idxs_to_remove = all_df[all_df.background.isnull()].index.values
     all_df = all_df.drop(index=idxs_to_remove)
+    # Fix errors in rows 336 and 310 in which simple_agreement and 
+    # elaborated_agreement were incorrectly annotated
+    all_df.loc[336, 'simple_agreement'] = 0
+    all_df.loc[310, 'elaborated_agreement'] = 1
     return all_df
 
 
 if __name__ == "__main__":
     all_df = get_dataset() 
     predictors_disagreement = [
-        'number_of_likes', 'number_of_ideas', 'agreement', 'simple_disagreement', 'elaborated_disagreement',
+        'number_of_likes', 'number_of_ideas', 'simple_agreement', 'elaborated_agreement',
         'topic_shift', 'brainstorming', 'blending', 'building', 'broadening', 'fact',
         'value', 'policy', 'interpretation', 'gives_reason_s', 'presents_evidence', 'asks_question_s',
         'provides_information', 'clarifies_position_stance', 'responds_to_previous_comment', 
@@ -305,7 +310,7 @@ if __name__ == "__main__":
     categorical_predictors = predictors_disagreement.copy()
     for numerical_predictor in numerical_predictors:
         categorical_predictors.remove(numerical_predictor)
-    best_model = predict_disagreement(all_df, categorical_predictors, numerical_predictors, 'informal')
+    best_model = predict_disagreement(all_df, categorical_predictors, numerical_predictors, 'member')
     print(best_model.summary())
     #print(best_models[0]['model'].summary())
     
